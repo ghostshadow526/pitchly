@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 
 const MAX_FREE_GENERATIONS = 5;
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
 type Goal = 'Partnership' | 'Press Coverage' | 'Beta Users' | 'Investor';
 type Tone = 'Casual' | 'Professional' | 'Short & Direct';
 
@@ -29,11 +31,20 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [variants, setVariants] = useState<string[]>([]);
   const [generationsUsed, setGenerationsUsed] = useState<number>(() => {
-    const stored = localStorage.getItem('pitchly_generations_used');
+    const stored = localStorage.getItem('pitchly_count');
     return stored ? Number(stored) || 0 : 0;
   });
+  const [isPaid, setIsPaid] = useState<boolean>(() => {
+    return localStorage.getItem('pitchly_paid') === 'true';
+  });
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [licenseKey, setLicenseKey] = useState('');
+  const [licenseError, setLicenseError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null
+  );
 
-  const canGenerate = generationsUsed < MAX_FREE_GENERATIONS;
+  const canGenerate = isPaid || generationsUsed < MAX_FREE_GENERATIONS;
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -44,13 +55,16 @@ function App() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canGenerate) return;
+    if (!canGenerate) {
+      setShowUpgradeModal(true);
+      return;
+    }
 
     setError(null);
     setLoading(true);
 
     try {
-      const response = await fetch('/api/generate', {
+      const response = await fetch(`${API_BASE_URL}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -68,7 +82,11 @@ function App() {
 
       const nextCount = generationsUsed + 1;
       setGenerationsUsed(nextCount);
-      localStorage.setItem('pitchly_generations_used', String(nextCount));
+      localStorage.setItem('pitchly_count', String(nextCount));
+
+      if (!isPaid && nextCount >= MAX_FREE_GENERATIONS) {
+        setShowUpgradeModal(true);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Something went wrong. Please try again.');
@@ -88,14 +106,41 @@ function App() {
 
   const remaining = Math.max(0, MAX_FREE_GENERATIONS - generationsUsed);
 
+  const handleLicenseSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLicenseError(null);
+
+    const trimmed = licenseKey.trim();
+    const isValid = trimmed.length === 19 && trimmed.startsWith('PTCH');
+
+    if (!isValid) {
+      setLicenseError('Invalid key, please check and try again');
+      setToast({ type: 'error', message: 'Invalid key, please check and try again' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+
+    localStorage.setItem('pitchly_paid', 'true');
+    localStorage.setItem('pitchly_count', '0');
+    setIsPaid(true);
+    setGenerationsUsed(0);
+    setShowUpgradeModal(false);
+    setLicenseKey('');
+    setLicenseError(null);
+    setToast({ type: 'success', message: 'License activated! You now have unlimited access.' });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-50">
       <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur">
         <div className="mx-auto max-w-4xl px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400 text-lg font-bold">
-              P
-            </span>
+            <img
+              src="https://raw.githubusercontent.com/ghostshadow526/pitchly/main/a-minimal-modern-logo-design-featuring-a_bPdvYICiTeC70NBrNtDDgA_y9FuFC6nTWKx7j0C8NdMNQ_sd.jpeg"
+              alt="Pitchly logo"
+              className="h-8 w-8 rounded-lg object-cover border border-slate-800"
+            />
             <div>
               <h1 className="text-lg font-semibold tracking-tight">Pitchly</h1>
               <p className="text-xs text-slate-400">
@@ -104,7 +149,7 @@ function App() {
             </div>
           </div>
           <span className="rounded-full border border-slate-800 bg-slate-900 px-3 py-1 text-xs text-slate-400">
-            Free · {remaining} generations left
+            {isPaid ? 'Pitchly Pro — Unlimited' : `Free · ${remaining} generations left`}
           </span>
         </div>
       </header>
@@ -256,12 +301,6 @@ function App() {
                   'Free limit reached'
                 )}
               </button>
-
-              {!canGenerate && (
-                <p className="text-[11px] text-slate-400 text-center">
-                  You&apos;ve used your 5 free generations. Upgrade to keep using Pitchly.
-                </p>
-              )}
             </form>
           </div>
         </section>
@@ -316,6 +355,59 @@ function App() {
           </div>
         </section>
       </main>
+
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80">
+          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+            <h2 className="text-xl font-semibold tracking-tight mb-2">Upgrade to Pitchly Pro 🚀</h2>
+            <p className="text-sm text-slate-300 mb-4">You've used your 5 free emails</p>
+
+            <a
+              href="https://pitchly.gumroad.com/l/pitchly"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mb-4 inline-flex w-full items-center justify-center rounded-lg bg-sky-500 px-4 py-2.5 text-sm font-medium text-slate-950 shadow-sm transition hover:bg-sky-400"
+            >
+              Get Unlimited Access — $19
+            </a>
+
+            <p className="mb-2 text-xs text-slate-400">
+              Already paid? Enter your license key below
+            </p>
+
+            <form onSubmit={handleLicenseSubmit} className="space-y-2">
+              <input
+                type="text"
+                value={licenseKey}
+                onChange={e => setLicenseKey(e.target.value)}
+                placeholder="PTCH-XXXXXXXXXXXXXXX"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none ring-0 focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+              />
+              {licenseError && (
+                <div className="text-xs text-red-300">{licenseError}</div>
+              )}
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 hover:border-sky-500 hover:bg-slate-900/80"
+              >
+                Submit
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 z-50 rounded-lg px-4 py-2 text-sm shadow-lg ${
+            toast.type === 'success'
+              ? 'bg-emerald-500 text-emerald-950'
+              : 'bg-red-500 text-red-50'
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
 
       <footer className="border-t border-slate-800 bg-slate-950/90">
         <div className="mx-auto max-w-4xl px-4 py-4 flex items-center justify-between text-[11px] text-slate-500">

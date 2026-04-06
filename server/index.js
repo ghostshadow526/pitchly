@@ -4,6 +4,9 @@ import dotenv from 'dotenv';
 import Groq from 'groq-sdk';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Resend } from 'resend';
+import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
 
 // Load env from the project root (../.env relative to this file),
 // independent of how/where the server is started.
@@ -13,9 +16,24 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const app = express();
 const port = process.env.PORT || 5000;
+const resend = new Resend(process.env.RESEND_API_KEY);
+const licensesPath = path.join(__dirname, 'licenses.json');
 
 app.use(cors());
 app.use(express.json());
+
+const readLicenses = () => {
+  try {
+    const data = fs.readFileSync(licensesPath, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    return [];
+  }
+};
+
+const saveLicenses = (licenses) => {
+  fs.writeFileSync(licensesPath, JSON.stringify(licenses, null, 2));
+};
 
 app.post('/api/generate', async (req, res) => {
   try {
@@ -95,8 +113,85 @@ Return the emails in a simple numbered list format (1., 2., 3.).`;
   }
 });
 
+app.post('/api/gumroad-ping', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const uuid = uuidv4();
+    const licenseKey = `PTCH-${uuid.substring(0, 8)}`;
+
+    const licenses = readLicenses();
+    licenses.push({
+      email,
+      key: licenseKey,
+      active: true,
+      date: new Date().toISOString()
+    });
+    saveLicenses(licenses);
+
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (!resendApiKey) {
+      console.error('RESEND_API_KEY not configured');
+      return res.status(500).json({ error: 'Email service not configured' });
+    }
+
+    await resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: email,
+      subject: 'Your Pitchly Pro Access Code 🚀',
+      html: `
+        <h2>Welcome to Pitchly Pro!</h2>
+        <p>Thanks for your purchase! Here is your access code:</p>
+        <h1 style='color: #4F46E5'>${licenseKey}</h1>
+        <p>Go to your Pitchly app and click 'Already paid?' then enter this code to unlock unlimited emails.</p>
+        <p>Reply to this email if you need any help!</p>
+        <p>- Abbas, Founder of Pitchly</p>
+      `
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error in gumroad-ping:', error);
+    res.status(500).json({ error: 'Failed to process purchase' });
+  }
+});
+
+app.post('/api/verify-license', (req, res) => {
+  try {
+    const { key } = req.body;
+
+    if (!key) {
+      return res.status(400).json({ error: 'License key is required' });
+    }
+
+    const licenses = readLicenses();
+    const license = licenses.find(l => l.key === key && l.active === true);
+
+    if (license) {
+      return res.json({ valid: true, email: license.email });
+    }
+
+    res.json({ valid: false });
+  } catch (error) {
+    console.error('Error in verify-license:', error);
+    res.status(500).json({ error: 'Failed to verify license' });
+  }
+});
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Serve static files from client/dist
+app.use(express.static(path.join(__dirname, '../client/dist')));
+
+// Serve index.html for any non-API routes (SPA fallback)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
 app.listen(port, () => {
